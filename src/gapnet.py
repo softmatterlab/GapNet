@@ -3,12 +3,13 @@ Neural Network Training with Highly Incomplete Datasets - 29 July 2021
 © Laura Natali, Yu-Wei Chang, Oveis Jamialahmadi,Stefano Romeo, Joana B. Pereira & Giovanni Volpe
 http://www.softmatterlab.org
 '''
-
+import numpy as np
+import warnings
+warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
-import numpy as np
 import matplotlib as mpl
 import scipy.stats as st
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
@@ -18,6 +19,7 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 mpl.rcParams['figure.figsize'] = (12, 10)
+
 
 METRICS = [
       tf.keras.metrics.TruePositives(name='tp'),
@@ -41,6 +43,9 @@ skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold = 1
 EPOCHS = 2000
 BATCH_SIZE = 256
+
+kern_init = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
+bias_init = tf.keras.initializers.Zeros()
 
 class generate_gapnet_model():
     """Generator of gapnet model."""
@@ -102,11 +107,14 @@ class generate_gapnet_model():
         """
         
         from tensorflow.python.keras.models import Sequential, Model
+
+        self.architecture = {}
+        self.history = {}
         
         # default number of nodes: twice the number of features
         if n_nodes == 0:
             n_nodes = np.multiply(self.cluster_sizes,2)
-        print(n_nodes)
+     
         
         # check that the dropout rate is in the correct range
         if dropout_rate> 1.0 or dropout_rate<0.0 :
@@ -129,10 +137,8 @@ class generate_gapnet_model():
         
         for i in range(n_clust):
             
-            
-
             self.architecture['clust_'+str(i)] =  tf.keras.Sequential()
-            print("Generating the "+str(i+1)+" neural network model ... \n ")  
+            print("Generating the "+str(i+1)+" neural network model ... ")  
             
             # Add the input layer
             self.architecture['clust_'+str(i)].add(layers.Input( shape = (self.cluster_sizes[i],) ))
@@ -154,7 +160,7 @@ class generate_gapnet_model():
         # The list of input layers for each cluster    
         input_layer = [layers.Input( shape =(s,) ) for s in self.cluster_sizes]   
         
-        print("Generating the final gapnet model ... \n ")    
+        print("Generating the final gapnet model ... ")    
 
         # Build the next layer on top of the previous one    
         prev_layer = input_layer
@@ -190,7 +196,7 @@ class generate_gapnet_model():
         self.Nclust = n_clust            
             
             
-    def train_first_stage(self, X: np.ndarray, y: np.ndarray, X_test: np.ndarray, y_test: np.ndarray ):
+    def train_first_stage(self, X: np.ndarray, y: np.ndarray, X_val: np.ndarray, y_val: np.ndarray ):
         
         """ Train the first stage of the network on the clusters of features
         
@@ -199,7 +205,7 @@ class generate_gapnet_model():
         X: np.ndarray of training inputs
         y: np.nedarray of training labels
         """  
-        self.build_model(show_summary=False)
+        
         from numpy import isnan
         from tensorflow.keras.utils import to_categorical
         
@@ -210,25 +216,24 @@ class generate_gapnet_model():
             
             # select the features of interest
             X_temp = X[:,start_feat : start_feat + s]
-            X_test_temp = X_test[:,start_feat : start_feat + s]
-            
-            
+            X_val_temp = X_val[:,start_feat : start_feat + s]
+
             # cut the missing values
-            y_temp = y[ ~isnan( X_temp ).any( axis=1 )]
-            y_test_temp = y_test[ ~isnan( X_test_temp ).any( axis=1 )]
-            X_temp = X_temp[ ~isnan( X_temp ).any( axis=1 )]
-            X_test_tmp = X_test_temp[ ~isnan( X_test_temp ).any( axis=1 )]
+            y_temp =  y[ ~isnan( X_temp ).any( axis=1 )] 
+            y_val_temp =  y_val[ ~isnan( X_val_temp ).any( axis=1 )] 
+            X_temp = X_temp[ ~isnan( X_temp ).any( axis=1 )] 
+            X_val_tmp = X_val_temp[ ~isnan( X_val_temp ).any( axis=1 )] 
             
             self.history['clust_'+str(ns)] = self.architecture['clust_'+str(ns)].fit(X_temp, to_categorical(y_temp),  
                         epochs=EPOCHS, verbose=0,callbacks=[early_stopping], 
-                        validation_data = ( X_test_tmp, to_categorical(y_test_temp)))
+                        validation_data = ( X_val_tmp, to_categorical(y_val_temp)) )
         
             start_feat = start_feat + s
-            print("Training process of clust #{} is done.".format(ns+1))
+            #print("Training process of clust #{} is done.".format(ns+1))
     
         print("Training process of first stage is done.")
 
-    def train_second_stage(self, X: np.ndarray, y:np.ndarray, X_test: np.ndarray, y_test: np.ndarray):
+    def train_second_stage(self, X: np.ndarray, y:np.ndarray, X_val: np.ndarray, y_val: np.ndarray):
         """ Train the concatenated network on the complete dataset
         
         
@@ -240,20 +245,22 @@ class generate_gapnet_model():
         
         from numpy import isnan
         from tensorflow.keras.utils import to_categorical
-
+        
         # retrain only on complete values
         y = y[ ~isnan( X ).any( axis=1 )]
         X = X[ ~isnan( X ).any( axis=1 )]
-        y_test = y_test[ ~isnan( X_test ).any( axis=1 )]
-        X_test = X_test[ ~isnan( X_test ).any( axis=1 )]
+        y_val = y_val[ ~isnan( X_val ).any( axis=1 )]
+        X_val = X_val[ ~isnan( X_val ).any( axis=1 )]
 
         # Convert the inputs into the correct shape
         X_list = []
-        X_test_list = []
+        X_val_list = []
+        
         start_point = 0
+        
         for size in self.cluster_sizes:
             X_list.append( X[:, start_point:start_point + size] )
-            X_test_list.append( X_test[:, start_point:start_point + size] )
+            X_val_list.append( X_val[:, start_point:start_point + size] )
             start_point = start_point + size
 
         # Arrays to select the matching layer from the correct network 
@@ -269,32 +276,33 @@ class generate_gapnet_model():
         # Train the gapnet on complete data
         self.history['gapnet'] = self.architecture['gapnet'].fit( 
                         X_list, to_categorical(y), epochs = EPOCHS, verbose = 0,
-                        callbacks = [early_stopping], validation_data = (X_test_list, to_categorical(y_test)) )
+                        callbacks = [early_stopping], validation_data = (X_val_list, to_categorical(y_val)) )
 
         best_epoch = np.argmin(self.history['gapnet'].history['val_loss'])+1
         train_accuracy = self.history['gapnet'].history['accuracy'][best_epoch-1]
         val_auc = self.history['gapnet'].history['val_auc'][best_epoch-1]
-        val_y_pred = self.architecture['gapnet'].predict(X_test_list)
+        val_y_pred = self.architecture['gapnet'].predict(X_val_list)
         threshold = 0.5
+        
         val_y_pred_class = np.where(val_y_pred>threshold, 1, 0)
         m = tf.keras.metrics.TruePositives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_tp = m.result().numpy()
         m = tf.keras.metrics.TrueNegatives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_tn = m.result().numpy()
         m = tf.keras.metrics.FalsePositives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_fp = m.result().numpy()
         m = tf.keras.metrics.FalseNegatives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_fn = m.result().numpy()
-
+        
         val_accuracy = (val_tp+val_tn)/(val_tp+val_tn+val_fp+val_fn)
         val_sensitivity = (val_tp)/(val_tp+val_fn)
         val_specificity = (val_tn)/(val_tn+val_fp)
         val_precision = (val_tp)/(val_tp+val_fp)
-        val_auc = roc_auc_score(y_test, val_y_pred[:,1])
+        val_auc = roc_auc_score(y_val, val_y_pred[:,1])
 
         self.best_epochs.append(best_epoch)
         self.train_accuracies.append(train_accuracy)
@@ -304,9 +312,33 @@ class generate_gapnet_model():
         self.val_sensitivities.append(val_sensitivity)
         self.val_specificities.append(val_specificity)
         self.val_y_preds = np.append(self.val_y_preds,val_y_pred[:,1])
-        self.val_y_labels = np.append(self.val_y_labels, y_test)
+        self.val_y_labels = np.append(self.val_y_labels, y_val)
         print("Training process of second stage is done.")
+
+        
+    def reset_weight(self):
+        """ Initialize the weights in the gapnet before each run.
+        """
+        
+        for model_name in self.architecture:
+            lengths = list(map(np.shape, self.architecture[model_name].get_weights()))
+            lengths = np.array(lengths, dtype=object).reshape(int(len(lengths) / 2), 2)
+ 
+            for n, layer in enumerate(self.architecture[model_name].layers):
+
+                if layer.count_params() > 0:
+                    new_weights = [
+                        kern_init(shape=lengths[n, 0]),
+                        bias_init(shape=lengths[n, 1]),
+                    ]
+                    layer.set_weights(new_weights)
+
+                else:
+                    lengths = np.vstack(([(0, 0), (0,)], lengths))
+
+     
     
+        
 class generate_vanilla_model():
     """Generator of vanilla model."""
     
@@ -380,7 +412,10 @@ class generate_vanilla_model():
         # Assign correct learning rate if provided   
         if learning_rate > 0:
             optim.learning_rate.assign(learning_rate)
-        
+
+        self.architecture = {}
+        self.history = {}
+            
         from tensorflow import keras
         self.architecture = keras.Sequential()
         
@@ -402,7 +437,7 @@ class generate_vanilla_model():
 
         
         
-    def train_single_stage(self, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, y_test: np.ndarray):
+    def train_single_stage(self, X_train: np.ndarray, y_train: np.ndarray, X_val: np.ndarray, y_val: np.ndarray):
         """Training the Vanilla neural network on complete data.
         
         Parameters
@@ -414,33 +449,33 @@ class generate_vanilla_model():
         """
         self.build_model(show_summary=False)
         self.history = self.architecture.fit(X_train, to_categorical(y_train), epochs=EPOCHS, verbose=0,
-            callbacks=[early_stopping], validation_data=(X_test, to_categorical(y_test)))
+            callbacks=[early_stopping], validation_data=(X_val, to_categorical(y_val)))
         
         
         best_epoch = np.argmin(self.history.history['val_loss'])+1
         train_accuracy = self.history.history['accuracy'][best_epoch-1]
         val_auc = self.history.history['val_auc'][best_epoch-1]
-        val_y_pred = self.architecture.predict(X_test)
+        val_y_pred = self.architecture.predict(X_val)
         threshold = 0.5
         val_y_pred_class = np.where(val_y_pred>threshold, 1, 0)
         m = tf.keras.metrics.TruePositives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_tp = m.result().numpy()
         m = tf.keras.metrics.TrueNegatives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_tn = m.result().numpy()
         m = tf.keras.metrics.FalsePositives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_fp = m.result().numpy()
         m = tf.keras.metrics.FalseNegatives()
-        m.update_state(val_y_pred_class[:,1], y_test)
+        m.update_state(val_y_pred_class[:,1], y_val)
         val_fn = m.result().numpy()
 
         val_accuracy = (val_tp+val_tn)/(val_tp+val_tn+val_fp+val_fn)
         val_sensitivity = (val_tp)/(val_tp+val_fn)
         val_specificity = (val_tn)/(val_tn+val_fp)
         val_precision = (val_tp)/(val_tp+val_fp)
-        val_auc = roc_auc_score(y_test, val_y_pred[:,1])
+        val_auc = roc_auc_score(y_val, val_y_pred[:,1])
 
         self.best_epochs.append(best_epoch)
         self.train_accuracies.append(train_accuracy)
@@ -450,8 +485,8 @@ class generate_vanilla_model():
         self.val_sensitivities.append(val_sensitivity)
         self.val_specificities.append(val_specificity)
         self.val_y_preds = np.append(self.val_y_preds,val_y_pred[:,1])
-        self.val_y_labels = np.append(self.val_y_labels, y_test)
-        print("Training process is done.")
+        self.val_y_labels = np.append(self.val_y_labels, y_val)
+        print("Training process of vanilla is done.")
         
 def present_results(model):
     """Evauate the training results.    
@@ -470,54 +505,51 @@ def present_results(model):
     print("val_spec {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_specificities), np.std(model.val_specificities), np.round(model.val_specificities, 3)))
     print("val_prec {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_precisions), np.std(model.val_precisions), np.round(model.val_precisions, 3)))
 
-def preprocess_with_missing_data(X,y):
+def preprocess_with_missing_data(X,Y):
     """Preprocess the input data and split it into subsets for training and test sets.    
         
     Parameters
     ----------   
     X: np.ndarray of overall dataset
-    y: np.nedarray of overall labels
+    Y: np.nedarray of overall labels
     """
     
     from numpy import isnan
     from sklearn.preprocessing import StandardScaler
-    y_overlap = y[ ~isnan( X ).any( axis=1 )]
+    
+    Y_overlap = Y[ ~isnan( X ).any( axis=1 )]
     X_overlap = X[ ~isnan( X ).any( axis=1 )]
     
-    X_train, X_test, y_train, y_test = train_test_split(X_overlap, y_overlap, test_size=0.2, random_state=42)
-    
+    X_train, X_test, Y_train, Y_test = train_test_split(X_overlap, Y_overlap, test_size=0.2, random_state=42)
     X_incomplete = X[ isnan( X ).any( axis=1 )]
-    y_incomplete = y[ isnan( X ).any( axis=1 )]
-    X_clust_1 = X_incomplete[0:450,25:]
-    X_clust_2 = X_incomplete[450:,:25]
+    Y_incomplete = Y[ isnan( X ).any( axis=1 )]
+    index = np.argwhere(isnan( X_incomplete ))
+    rows, cols = zip(*index)
+    X_incomplete[rows, cols] = 0
     
     scaler = StandardScaler()
-    X_clust_1 = scaler.fit_transform(X_clust_1)
-    X_clust_2 = scaler.fit_transform(X_clust_2)
     X_train = scaler.fit_transform(X_train)
+    X_incomplete = scaler.transform(X_incomplete)
     X_test = scaler.transform(X_test)
     
     thres = 20
-    X_clust_1 = np.clip(X_clust_1, -thres, thres)
-    X_clust_2 = np.clip(X_clust_2, -thres, thres)
+    X_incomplete = np.clip(X_incomplete, -thres, thres)
     X_train = np.clip(X_train, -thres, thres)
     X_test = np.clip(X_test, -thres, thres)
     
-    X_incomplete[0:450,25:] = X_clust_1
-    X_incomplete[450:,:25] = X_clust_2
+    X_incomplete[rows, cols] = np.nan
+    X_train_overall = np.append(X_train, X_incomplete,axis=0)
+    Y_train_overall = np.append(Y_train, Y_incomplete,axis=0)
     
-    X_train = np.append(X_train, X_incomplete,axis=0)
-    y_train = np.append(y_train, y_incomplete,axis=0)
-    
-    return X_train, y_train, X_test, y_test
-    
+    return X_train_overall, Y_train_overall, X_train, Y_train, X_test, Y_test
+
 def preprocess(X,y):
     """Preprocess the input data and split it into subsets for training and test sets.    
         
     Parameters
     ----------   
     X: np.ndarray of overall dataset
-    y: np.nedarray of overall labels
+    y: np.ndarray of overall labels
     """
     
     from sklearn.preprocessing import StandardScaler
