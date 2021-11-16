@@ -41,7 +41,7 @@ early_stopping = tf.keras.callbacks.EarlyStopping(
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold = 1
-EPOCHS = 200
+EPOCHS = 100
 BATCH_SIZE = 32
 
 kern_init = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
@@ -280,7 +280,7 @@ class generate_gapnet_model():
                         #callbacks = [early_stopping], validation_data = (X_val_list, to_categorical(y_val)) )
                         validation_data = (X_val_list, to_categorical(y_val)) )
 
-        best_epoch = np.argmin(self.history['gapnet'].history['val_loss'])+1
+        best_epoch = EPOCHS
         train_accuracy = self.history['gapnet'].history['accuracy'][best_epoch-1]
         val_auc = self.history['gapnet'].history['val_auc'][best_epoch-1]
         val_y_pred = self.architecture['gapnet'].predict(X_val_list)
@@ -455,7 +455,7 @@ class generate_vanilla_model():
         validation_data=(X_val, to_categorical(y_val)))
         
         
-        best_epoch = np.argmin(self.history.history['val_loss'])+1
+        best_epoch = EPOCHS
         train_accuracy = self.history.history['accuracy'][best_epoch-1]
         val_auc = self.history.history['val_auc'][best_epoch-1]
         val_y_pred = self.architecture.predict(X_val)
@@ -500,7 +500,6 @@ def present_results(model):
     """
         
     print("Results :")
-    print("best_epochs {}".format(model.best_epochs))
     print("train_accuracy {:.3f}+/-{:.3f} : {}".format(np.mean(model.train_accuracies), np.std(model.train_accuracies), np.round(model.train_accuracies, 3)))
     print("test_accuracy {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_accuracies), np.std(model.val_accuracies), np.round(model.val_accuracies, 3)))
     print("test_auc {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_aucs), np.std(model.val_aucs), np.round(model.val_aucs, 3)))
@@ -615,7 +614,7 @@ def preprocess_standardization_with_missing_data(X_train, Y_train, X_test, X_inc
         
     return X_train, X_test, X_train_overall, Y_train_overall
 
-def preprocess_standardization_with_imputed_data(X_train, Y_train, X_test, X_incomplete, Y_incomplete):
+def preprocess_standardization_with_imputed_data(method, X_train, Y_train, X_test, X_incomplete, Y_incomplete):
     """Standarize the input data based on training dataset and apply it on testing dataset and incomplete dataset. 
     Also concatenate the incomplete dataset with training dataset after the standarization.
         
@@ -629,15 +628,33 @@ def preprocess_standardization_with_imputed_data(X_train, Y_train, X_test, X_inc
     from sklearn.preprocessing import StandardScaler
     import copy
     from sklearn.impute import SimpleImputer
+    from sklearn.impute import KNNImputer
+    from sklearn.experimental import enable_iterative_imputer
+    from sklearn.impute import IterativeImputer
     
     X_incomplete_features = copy.deepcopy(X_incomplete)
     
     X_train_with_imputation = np.append(X_train, X_incomplete_features, axis=0)
     Y_train_with_imputation = np.append(Y_train, Y_incomplete, axis=0)
     
-    imp = SimpleImputer(missing_values=np.nan, strategy='mean')
-    X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
-    
+    if method == 'mean':
+        imp = SimpleImputer(missing_values=np.nan, strategy='mean')
+        X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
+    elif method == 'median':
+        imp = SimpleImputer(missing_values=np.nan, strategy='median')
+        X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
+    elif method == 'frequent':
+        imp = SimpleImputer(missing_values=np.nan, strategy='most_frequent')
+        X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
+    elif method == 'knn':
+        imp = KNNImputer(n_neighbors=5, weights="uniform")
+        X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
+    elif method == 'bayesian':
+        imp = IterativeImputer(random_state=23)
+        X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
+    else:
+        print("Oops! That was no valid method. Try again...")
+        
     scaler = StandardScaler()
     X_train_with_imputation = scaler.fit_transform(X_train_with_imputation)
     X_test_with_imputation = scaler.transform(X_test)
