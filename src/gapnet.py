@@ -6,6 +6,9 @@ http://www.softmatterlab.org
 import numpy as np
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
+def warn(*args, **kwargs):
+    pass
+warnings.warn = warn
 import tensorflow as tf
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
@@ -41,7 +44,7 @@ early_stopping = tf.keras.callbacks.EarlyStopping(
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold = 1
-EPOCHS = 100
+EPOCHS = 250
 BATCH_SIZE = 32
 
 kern_init = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
@@ -50,7 +53,7 @@ bias_init = tf.keras.initializers.Zeros()
 class generate_gapnet_model():
     """Generator of gapnet model."""
     
-    def __init__(self, cluster_sizes: np.ndarray, n_feature : int = 40, n_classes : int = 2):
+    def __init__(self, cluster_sizes: np.ndarray, n_feature : int = 40, n_classes : int = 1):
         """Define the GapNet model
         
         Parameters
@@ -65,6 +68,7 @@ class generate_gapnet_model():
         self.cluster_sizes = cluster_sizes
         self.architecture = {}
         self.history = {}
+        self.histories = []
         self.best_epochs = []
         self.train_accuracies = []
         self.val_accuracies = []
@@ -78,10 +82,10 @@ class generate_gapnet_model():
     def build_model(self, n_dense: int = 2, n_nodes: int = 0, 
                  dropout_rate: tf.keras.layers.Dropout = 0.5,
                  activation_function: tf.keras.activations = "relu", 
-                 output_activation : tf.keras.activations = "softmax",
+                 output_activation : tf.keras.activations = "sigmoid",
                  optim : tf.keras.optimizers = "adam",
                  learning_rate : float = 0.0,
-                 loss_function : tf.keras.losses = 'categorical_crossentropy',
+                 loss_function : tf.keras.losses = 'binary_crossentropy',
                  show_summary: bool = False):
         """Generate the neural network architecture.
         
@@ -224,15 +228,15 @@ class generate_gapnet_model():
             X_temp = X_temp[ ~isnan( X_temp ).any( axis=1 )] 
             X_val_tmp = X_val_temp[ ~isnan( X_val_temp ).any( axis=1 )] 
             
-            self.history['clust_'+str(ns)] = self.architecture['clust_'+str(ns)].fit(X_temp, to_categorical(y_temp),  
+            self.history['clust_'+str(ns)] = self.architecture['clust_'+str(ns)].fit(X_temp, y_temp,  
                         #epochs=EPOCHS, verbose=0,callbacks=[early_stopping], 
                         epochs=EPOCHS, verbose=0, 
-                        validation_data = ( X_val_tmp, to_categorical(y_val_temp)) )
+                        validation_data = ( X_val_tmp, y_val_temp) )
         
             start_feat = start_feat + s
             #print("Training process of clust #{} is done.".format(ns+1))
     
-        print("Training process of first stage is done.")
+        print("Training process of first stage of GapNet is done.")
 
     def train_second_stage(self, X: np.ndarray, y:np.ndarray, X_val: np.ndarray, y_val: np.ndarray):
         """ Train the concatenated network on the complete dataset
@@ -276,35 +280,36 @@ class generate_gapnet_model():
 
         # Train the gapnet on complete data
         self.history['gapnet'] = self.architecture['gapnet'].fit( 
-                        X_list, to_categorical(y), epochs = EPOCHS, verbose = 0,
+                        X_list, y, epochs = EPOCHS, verbose = 0,
                         #callbacks = [early_stopping], validation_data = (X_val_list, to_categorical(y_val)) )
-                        validation_data = (X_val_list, to_categorical(y_val)) )
+                        validation_data = (X_val_list,y_val) )
 
         best_epoch = EPOCHS
         train_accuracy = self.history['gapnet'].history['accuracy'][best_epoch-1]
+        self.histories.append(self.history['gapnet'])
         val_auc = self.history['gapnet'].history['val_auc'][best_epoch-1]
         val_y_pred = self.architecture['gapnet'].predict(X_val_list)
         threshold = 0.5
         
         val_y_pred_class = np.where(val_y_pred>threshold, 1, 0)
         m = tf.keras.metrics.TruePositives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_tp = m.result().numpy()
         m = tf.keras.metrics.TrueNegatives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_tn = m.result().numpy()
         m = tf.keras.metrics.FalsePositives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_fp = m.result().numpy()
         m = tf.keras.metrics.FalseNegatives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_fn = m.result().numpy()
         
         val_accuracy = (val_tp+val_tn)/(val_tp+val_tn+val_fp+val_fn)
         val_sensitivity = (val_tp)/(val_tp+val_fn)
         val_specificity = (val_tn)/(val_tn+val_fp)
         val_precision = (val_tp)/(val_tp+val_fp)
-        val_auc = roc_auc_score(y_val, val_y_pred[:,1])
+        val_auc = roc_auc_score(y_val, val_y_pred)
 
         self.best_epochs.append(best_epoch)
         self.train_accuracies.append(train_accuracy)
@@ -313,9 +318,11 @@ class generate_gapnet_model():
         self.val_precisions.append(val_precision)
         self.val_sensitivities.append(val_sensitivity)
         self.val_specificities.append(val_specificity)
-        self.val_y_preds = np.append(self.val_y_preds,val_y_pred[:,1])
-        self.val_y_labels = np.append(self.val_y_labels, y_val)
-        print("Training process of second stage is done.")
+        self.val_y_preds.append(val_y_pred)
+        self.val_y_labels.append(y_val)
+        #self.val_y_preds = np.append(self.val_y_preds,val_y_pred[:,1])
+        #self.val_y_labels = np.append(self.val_y_labels, y_val)
+        print("Training process of second stage of GapNet is done.")
 
         
     def reset_weight(self):
@@ -344,7 +351,7 @@ class generate_gapnet_model():
 class generate_vanilla_model():
     """Generator of vanilla model."""
     
-    def __init__(self, n_feature: int = 40, n_classes: int = 2):
+    def __init__(self, name: str = 'vanilla', n_feature: int = 40, n_classes: int = 1):
         """Define the Vanilla model
         
         Parameters
@@ -355,10 +362,12 @@ class generate_vanilla_model():
             positive integer default 2
         """        
         
+        self.Name = name
         self.Nfeat = n_feature
         self.Nclass = n_classes
         self.architecture = None
         self.history = []
+        self.histories = []
         self.best_epochs = []
         self.train_accuracies = []
         self.val_accuracies = []
@@ -372,10 +381,10 @@ class generate_vanilla_model():
     def build_model(self, n_dense: int = 2, n_nodes: int = 0, 
                  dropout_rate: tf.keras.layers.Dropout = 0.5,
                  activation_function: tf.keras.activations = "relu", 
-                 output_activation : tf.keras.activations = "softmax",
+                 output_activation : tf.keras.activations = "sigmoid",
                  optim : tf.keras.optimizers = tf.keras.optimizers.Adam(),
                  learning_rate : float = 0.0,
-                 loss_function : tf.keras.losses = 'categorical_crossentropy',
+                 loss_function : tf.keras.losses = 'binary_crossentropy',
                  show_summary: bool = False):
         
         """Generate the neural network architecture.
@@ -450,35 +459,36 @@ class generate_vanilla_model():
         y_test: np.nedarray of testing labels
         """
         self.build_model(show_summary=False)
-        self.history = self.architecture.fit(X_train, to_categorical(y_train), epochs=EPOCHS, verbose=0,
+        self.history = self.architecture.fit(X_train, y_train, epochs=EPOCHS, verbose=0,
         #    callbacks=[early_stopping], validation_data=(X_val, to_categorical(y_val)))
-        validation_data=(X_val, to_categorical(y_val)))
+        validation_data=(X_val, y_val))
         
         
         best_epoch = EPOCHS
         train_accuracy = self.history.history['accuracy'][best_epoch-1]
+        self.histories.append(self.history)
         val_auc = self.history.history['val_auc'][best_epoch-1]
         val_y_pred = self.architecture.predict(X_val)
         threshold = 0.5
         val_y_pred_class = np.where(val_y_pred>threshold, 1, 0)
         m = tf.keras.metrics.TruePositives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_tp = m.result().numpy()
         m = tf.keras.metrics.TrueNegatives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_tn = m.result().numpy()
         m = tf.keras.metrics.FalsePositives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_fp = m.result().numpy()
         m = tf.keras.metrics.FalseNegatives()
-        m.update_state(val_y_pred_class[:,1], y_val)
+        m.update_state(val_y_pred_class, y_val)
         val_fn = m.result().numpy()
 
         val_accuracy = (val_tp+val_tn)/(val_tp+val_tn+val_fp+val_fn)
         val_sensitivity = (val_tp)/(val_tp+val_fn)
         val_specificity = (val_tn)/(val_tn+val_fp)
         val_precision = (val_tp)/(val_tp+val_fp)
-        val_auc = roc_auc_score(y_val, val_y_pred[:,1])
+        val_auc = roc_auc_score(y_val, val_y_pred)
 
         self.best_epochs.append(best_epoch)
         self.train_accuracies.append(train_accuracy)
@@ -487,9 +497,9 @@ class generate_vanilla_model():
         self.val_precisions.append(val_precision)
         self.val_sensitivities.append(val_sensitivity)
         self.val_specificities.append(val_specificity)
-        self.val_y_preds = np.append(self.val_y_preds,val_y_pred[:,1])
-        self.val_y_labels = np.append(self.val_y_labels, y_val)
-        print("Training process of vanilla is done.")
+        self.val_y_preds.append(val_y_pred)
+        self.val_y_labels.append(y_val)
+        print("Training process of " + self.Name + " is done.")
         
 def present_results(model):
     """Evauate the training results.    
@@ -684,6 +694,35 @@ def preprocess(X,y):
     
     return X_train, y_train, X_test, y_test
 
+def plot_roc(name, labels, preds, axe = None, shaded=False, x_label=False, alpha=0.15, **kwargs):
+    
+    if axe==None:
+        fig, axe = plt.subplots(1,1,figsize=(8, 8))
+    axe.plot(np.linspace(0,1,11),np.linspace(0,1,11), linestyle='dashed',color='k', linewidth=1)
+    from sklearn import metrics
+    base_fp = np.linspace(0, 1, 10)
+    i = 0
+    tp_all =[]
+    for pred in preds:
+        label = labels[i]
+        fp, tp, _ = metrics.roc_curve(label, pred, pos_label=1, drop_intermediate=False)
+        tp = np.interp(base_fp, fp, tp)
+        tp_all.append(tp)
+        i += 1
+    axe.plot(base_fp, np.mean(tp_all, axis=0), linewidth=3, **kwargs)
+    if shaded:
+        axe.fill_between(base_fp, np.mean(tp_all, axis=0)-np.std(tp_all, axis=0), np.mean(tp_all, axis=0)+np.std(tp_all, axis=0), alpha = alpha, **kwargs)
+    axe.set_box_aspect(1) 
+    if x_label:
+        axe.set_xlabel('False positive rate', fontsize=22)
+    axe.set_ylabel('True positive rate', fontsize=22)
+    axe.set_xticks(np.linspace(0,1,3))
+    axe.set_yticks(np.linspace(0,1,3))
+    axe.set_xticklabels(np.linspace(0,1,3) , fontsize = 22)
+    axe.set_yticklabels(np.linspace(0,1,3) , fontsize = 22)
+    axe.set_xlim([-0.00,1])
+    axe.set_ylim([-0.00,1])
+
 def plot_roc_avg(name, label, prediction, runs, **kwargs):
     plt.plot(np.linspace(0,1,11),np.linspace(0,1,11), linestyle='dashed',color='k', linewidth=1)
     from sklearn import metrics
@@ -721,6 +760,77 @@ def plot_roc_avg(name, label, prediction, runs, **kwargs):
     for axis in ['top','bottom','left','right']:
         ax.spines[axis].set_linewidth(1)
 
+def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **kwargs):
+    metrics = ['loss']
+    history_aucs = []
+    history_epoch = histories[0].epoch
+    for history in histories:
+        #history_aucs.append(history.history['val_accuracy'])
+        history_aucs.append(history.history['val_auc'])
+        #history_auc_avg.append(history.history['auc'])
+        #history_loss_avg.append(history.history['loss'])
+
+    
+    if axes==None:
+        fig, axes = plt.subplots(1,1,figsize=(8, 8))
+        
+    
+    history_auc_avg = np.mean(history_aucs, axis=0)
+    history_auc_std = np.std(history_aucs, axis=0)
+    
+    axes.set_box_aspect(1)
+    axes.set_yticks(np.round( np.arange(0.2,1.2,0.2), decimals = 1 ))
+    axes.set_yticklabels(np.round( np.arange(0.2,1.2,0.2), decimals = 1 ) , fontsize = 22)
+    axes.set_xticks(np.linspace(0,EPOCHS,3, dtype=int))
+    axes.set_xticklabels(np.linspace(0,EPOCHS,3, dtype=int) , fontsize = 22)
+    
+    if shaded:
+        axes.fill_between(history_epoch, history_auc_avg-history_auc_std, history_auc_avg+history_auc_std, alpha = alpha, **kwargs)
+        axes.plot(history_epoch, history_auc_avg, lw=2., **kwargs)
+    else:
+        axes.plot(history_epoch, history_auc_avg, alpha = 0.7, lw=2., **kwargs)
+    
+    axes.set_xlabel('# epochs', fontsize = 22)
+        
+    axes.set_ylabel('Testing AUC', fontsize = 22)
+    axes.set_ylim([0.4, 1])
+    axes.set_xlim([0,EPOCHS])
+
+def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **kwargs):
+    history_losses = []
+    history_epoch = histories[0].epoch
+    for history in histories:
+        #history_aucs.append(history.history['val_accuracy'])
+        history_losses.append(history.history['val_loss'])
+        #history_auc_avg.append(history.history['auc'])
+        #history_loss_avg.append(history.history['loss'])
+
+    
+    if axes==None:
+        fig, axes = plt.subplots(1,1,figsize=(8, 8))
+        
+    
+    history_loss_avg = np.mean(history_losses, axis=0)
+    history_loss_std = np.std(history_losses, axis=0)
+    
+    axes.set_box_aspect(1)
+    axes.set_yticks(np.linspace(0,10,5))
+    axes.set_yticklabels(np.linspace(0,10,5) , fontsize = 22)
+    axes.set_xticks(np.linspace(0,EPOCHS,3, dtype=int))
+    axes.set_xticklabels(np.linspace(0,EPOCHS,3, dtype=int) , fontsize = 22)
+    
+    if shaded:
+        axes.fill_between(history_epoch, history_loss_avg-history_loss_std, history_loss_avg+history_loss_std, alpha = alpha, **kwargs)
+        axes.plot(history_epoch, history_loss_avg, lw=2., **kwargs)
+    else:
+        axes.plot(history_epoch, history_loss_avg, alpha = 0.7, lw=2., **kwargs)
+    
+    axes.set_xlabel('# epochs', fontsize = 22)
+        
+    axes.set_ylabel('Testing loss', fontsize = 22)
+    axes.set_ylim([0, 10])
+    axes.set_xlim([0,EPOCHS])
+        
 def plot_metrics(history):
     metrics = ['loss', 'auc', 'precision', 'recall']
     for n, metric in enumerate(metrics):
@@ -771,8 +881,18 @@ def plot_hist(aucs, label_legend, **kwargs):
     ax.set_aspect(1.0/ax.get_data_ratio(), adjustable='box')
 
 def delong_test(pred1, pred2, label):
-    X_A, Y_A = group_preds_by_label(pred1, label)
-    X_B, Y_B = group_preds_by_label(pred2, label)
+    pred1_all = []
+    pred2_all = []
+    label_all = []
+    for i in range(len(pred1)):
+        a = pred1[i]
+        pred1_all = np.concatenate((pred1_all, a[:,0]), axis = 0)
+        a = pred2[i]
+        pred2_all = np.concatenate((pred2_all, a[:,0]), axis = 0)
+        a = label[i]
+        label_all = np.concatenate((label_all, a[:]), axis = 0)
+    X_A, Y_A = group_preds_by_label(pred1_all, label_all)
+    X_B, Y_B = group_preds_by_label(pred2_all, label_all)
     V_A10, V_A01 = structural_components(X_A, Y_A)
     V_B10, V_B01 = structural_components(X_B, Y_B)
     auc_A = auc(X_A, Y_A)
