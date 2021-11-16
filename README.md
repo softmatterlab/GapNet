@@ -15,6 +15,6 @@ GapNet is an alternative deep-learning training approach that can use highly inc
 To see GapNet working principle, we provide two well-documented tutorial notebooks that train the GapNet model on a simulated dataset:
 
 1. [gapnet_tutorial.ipynb](https://github.com/softmatterlab/GapNet/blob/main/gapnet_tutorial.ipynb) demonstrates how to train a GapNet model on a simulated dataset with highly incomplete features.
-2. [omparison_gapnet_vs_other_models.ipynb](https://github.com/softmatterlab/GapNet/blob/main/omparison_gapnet_vs_other_models.ipynb) compares the performance among GapNet, Vanilla , and other imputed-data trained models.
+2. [omparison_gapnet_vs_other_models.ipynb](https://github.com/softmatterlab/GapNet/blob/main/comparison_gapnet_vs_other_models.ipynb) compares the performance between GapNet, and other models.
 
 Each code example is a Jupyter Notebook that also includes detailed comments to guide the user. All neccesary files to run the code examples are provided. 
