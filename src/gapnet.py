@@ -41,8 +41,8 @@ early_stopping = tf.keras.callbacks.EarlyStopping(
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold = 1
-EPOCHS = 2000
-BATCH_SIZE = 256
+EPOCHS = 200
+BATCH_SIZE = 32
 
 kern_init = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
 bias_init = tf.keras.initializers.Zeros()
@@ -225,7 +225,8 @@ class generate_gapnet_model():
             X_val_tmp = X_val_temp[ ~isnan( X_val_temp ).any( axis=1 )] 
             
             self.history['clust_'+str(ns)] = self.architecture['clust_'+str(ns)].fit(X_temp, to_categorical(y_temp),  
-                        epochs=EPOCHS, verbose=0,callbacks=[early_stopping], 
+                        #epochs=EPOCHS, verbose=0,callbacks=[early_stopping], 
+                        epochs=EPOCHS, verbose=0, 
                         validation_data = ( X_val_tmp, to_categorical(y_val_temp)) )
         
             start_feat = start_feat + s
@@ -276,7 +277,8 @@ class generate_gapnet_model():
         # Train the gapnet on complete data
         self.history['gapnet'] = self.architecture['gapnet'].fit( 
                         X_list, to_categorical(y), epochs = EPOCHS, verbose = 0,
-                        callbacks = [early_stopping], validation_data = (X_val_list, to_categorical(y_val)) )
+                        #callbacks = [early_stopping], validation_data = (X_val_list, to_categorical(y_val)) )
+                        validation_data = (X_val_list, to_categorical(y_val)) )
 
         best_epoch = np.argmin(self.history['gapnet'].history['val_loss'])+1
         train_accuracy = self.history['gapnet'].history['accuracy'][best_epoch-1]
@@ -449,7 +451,8 @@ class generate_vanilla_model():
         """
         self.build_model(show_summary=False)
         self.history = self.architecture.fit(X_train, to_categorical(y_train), epochs=EPOCHS, verbose=0,
-            callbacks=[early_stopping], validation_data=(X_val, to_categorical(y_val)))
+        #    callbacks=[early_stopping], validation_data=(X_val, to_categorical(y_val)))
+        validation_data=(X_val, to_categorical(y_val)))
         
         
         best_epoch = np.argmin(self.history.history['val_loss'])+1
@@ -499,11 +502,11 @@ def present_results(model):
     print("Results :")
     print("best_epochs {}".format(model.best_epochs))
     print("train_accuracy {:.3f}+/-{:.3f} : {}".format(np.mean(model.train_accuracies), np.std(model.train_accuracies), np.round(model.train_accuracies, 3)))
-    print("val_accuracy {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_accuracies), np.std(model.val_accuracies), np.round(model.val_accuracies, 3)))
-    print("val_auc {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_aucs), np.std(model.val_aucs), np.round(model.val_aucs, 3)))
-    print("val_sens {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_sensitivities), np.std(model.val_sensitivities), np.round(model.val_sensitivities, 3)))
-    print("val_spec {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_specificities), np.std(model.val_specificities), np.round(model.val_specificities, 3)))
-    print("val_prec {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_precisions), np.std(model.val_precisions), np.round(model.val_precisions, 3)))
+    print("test_accuracy {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_accuracies), np.std(model.val_accuracies), np.round(model.val_accuracies, 3)))
+    print("test_auc {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_aucs), np.std(model.val_aucs), np.round(model.val_aucs, 3)))
+    print("test_sens {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_sensitivities), np.std(model.val_sensitivities), np.round(model.val_sensitivities, 3)))
+    print("test_spec {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_specificities), np.std(model.val_specificities), np.round(model.val_specificities, 3)))
+    print("test_prec {:.3f}+/-{:.3f} : {}".format(np.mean(model.val_precisions), np.std(model.val_precisions), np.round(model.val_precisions, 3)))
 
 def preprocess_with_missing_data(X,Y):
     """Preprocess the input data and split it into subsets for training and test sets.    
@@ -542,6 +545,71 @@ def preprocess_with_missing_data(X,Y):
     Y_train_overall = np.append(Y_train, Y_incomplete,axis=0)
     
     return X_train_overall, Y_train_overall, X_train, Y_train, X_test, Y_test
+
+def separate_missing_data(X,Y):
+    """Split the input data into subsets for complete and incomplete cases.    
+        
+    Parameters
+    ----------   
+    X: np.ndarray of overall dataset
+    Y: np.nedarray of overall labels
+    """
+    
+    from numpy import isnan
+    from sklearn.preprocessing import StandardScaler
+    
+    Y_overlap = Y[ ~isnan( X ).any( axis=1 )]
+    X_overlap = X[ ~isnan( X ).any( axis=1 )]
+    
+    X_incomplete = X[ isnan( X ).any( axis=1 )]
+    Y_incomplete = Y[ isnan( X ).any( axis=1 )]
+    
+    return X_overlap, Y_overlap, X_incomplete, Y_incomplete
+
+def preprocess_standardization(X_train, X_test):
+    """Standarize the input data based on training set and apply it on testing set.    
+        
+    Parameters
+    ----------   
+    X_train: np.ndarray of training dataset
+    X_test: np.ndarray of testing labels
+    """
+    
+    from sklearn.preprocessing import StandardScaler
+    
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
+    
+    return X_train, X_test
+
+def preprocess_standardization_with_missing_data(X_train, Y_train, X_test, X_incomplete, Y_incomplete):
+    """Standarize the input data based on training dataset and apply it on testing dataset and incomplete dataset. 
+    Also concatenate the incomplete dataset with training dataset after the standarization.
+        
+    Parameters
+    ----------   
+    X_train: np.ndarray of training dataset
+    X_test: np.ndarray of testing labels
+    """
+    
+    from numpy import isnan
+    from sklearn.preprocessing import StandardScaler
+    import copy
+    X_incomplete_features = copy.deepcopy(X_incomplete)
+    index = np.argwhere(isnan( X_incomplete_features ))
+    rows, cols = zip(*index)
+    X_incomplete_features[rows, cols] = 0
+    
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_incomplete_features = scaler.transform(X_incomplete_features)
+    X_test = scaler.transform(X_test)
+    
+    X_train_overall = np.append(X_train, X_incomplete_features, axis=0)
+    Y_train_overall = np.append(Y_train, Y_incomplete, axis=0)
+    
+    return X_train, X_test, X_train_overall, Y_train_overall
 
 def preprocess(X,y):
     """Preprocess the input data and split it into subsets for training and test sets.    
