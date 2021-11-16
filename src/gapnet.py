@@ -596,6 +596,8 @@ def preprocess_standardization_with_missing_data(X_train, Y_train, X_test, X_inc
     from numpy import isnan
     from sklearn.preprocessing import StandardScaler
     import copy
+    from sklearn.impute import SimpleImputer
+    
     X_incomplete_features = copy.deepcopy(X_incomplete)
     index = np.argwhere(isnan( X_incomplete_features ))
     rows, cols = zip(*index)
@@ -606,10 +608,41 @@ def preprocess_standardization_with_missing_data(X_train, Y_train, X_test, X_inc
     X_incomplete_features = scaler.transform(X_incomplete_features)
     X_test = scaler.transform(X_test)
     
+    X_incomplete_features[rows, cols] = np.nan
+    
     X_train_overall = np.append(X_train, X_incomplete_features, axis=0)
     Y_train_overall = np.append(Y_train, Y_incomplete, axis=0)
-    
+        
     return X_train, X_test, X_train_overall, Y_train_overall
+
+def preprocess_standardization_with_imputed_data(X_train, Y_train, X_test, X_incomplete, Y_incomplete):
+    """Standarize the input data based on training dataset and apply it on testing dataset and incomplete dataset. 
+    Also concatenate the incomplete dataset with training dataset after the standarization.
+        
+    Parameters
+    ----------   
+    X_train: np.ndarray of training dataset
+    X_test: np.ndarray of testing labels
+    """
+    
+    from numpy import isnan
+    from sklearn.preprocessing import StandardScaler
+    import copy
+    from sklearn.impute import SimpleImputer
+    
+    X_incomplete_features = copy.deepcopy(X_incomplete)
+    
+    X_train_with_imputation = np.append(X_train, X_incomplete_features, axis=0)
+    Y_train_with_imputation = np.append(Y_train, Y_incomplete, axis=0)
+    
+    imp = SimpleImputer(missing_values=np.nan, strategy='mean')
+    X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
+    
+    scaler = StandardScaler()
+    X_train_with_imputation = scaler.fit_transform(X_train_with_imputation)
+    X_test_with_imputation = scaler.transform(X_test)
+        
+    return X_train_with_imputation, Y_train_with_imputation, X_test_with_imputation
 
 def preprocess(X,y):
     """Preprocess the input data and split it into subsets for training and test sets.    
