@@ -44,8 +44,9 @@ early_stopping = tf.keras.callbacks.EarlyStopping(
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold = 1
-EPOCHS = 250
-BATCH_SIZE = 32
+EPOCHS = 100
+BATCH_SIZE = 16
+LR_RATE = 0.001
 
 kern_init = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
 bias_init = tf.keras.initializers.Zeros()
@@ -83,9 +84,9 @@ class generate_gapnet_model():
                  dropout_rate: tf.keras.layers.Dropout = 0.5,
                  activation_function: tf.keras.activations = "relu", 
                  output_activation : tf.keras.activations = "sigmoid",
-                 optim : tf.keras.optimizers = "adam",
+                 optim : tf.keras.optimizers = tf.keras.optimizers.Adam(learning_rate=LR_RATE),
                  learning_rate : float = 0.0,
-                 loss_function : tf.keras.losses = 'binary_crossentropy',
+                 loss_function : tf.keras.losses = tf.keras.losses.BinaryCrossentropy(),
                  show_summary: bool = False):
         """Generate the neural network architecture.
         
@@ -119,11 +120,10 @@ class generate_gapnet_model():
         if n_nodes == 0:
             n_nodes = np.multiply(self.cluster_sizes,2)
      
-        
         # check that the dropout rate is in the correct range
         if dropout_rate> 1.0 or dropout_rate<0.0 :
             raise ValueError("The dropout rate must be a value between 0 and 1 ")
-         
+        
         # Assign correct learning rate if provided   
         if learning_rate > 0:
             optim.learning_rate.assign(learning_rate)
@@ -151,8 +151,9 @@ class generate_gapnet_model():
             for nl in range(n_dense):
                 
                 self.architecture['clust_'+str(i)].add(layers.Dense(n_nodes[i], activation = activation_function))
-                self.architecture['clust_'+str(i)].add(layers.Dropout(dropout_rate))
+                #self.architecture['clust_'+str(i)].add(layers.Dropout(dropout_rate))
                 
+            self.architecture['clust_'+str(i)].add(layers.Dropout(dropout_rate))
             # Add the output layer with activation function "output_activation"
             self.architecture['clust_'+str(i)].add(layers.Dense(self.Nclass, activation=output_activation))
         
@@ -172,8 +173,10 @@ class generate_gapnet_model():
             
             new_layer = [layers.Dense(n_nodes[i], activation = activation_function )(prev_layer[i]) for i in range(n_clust)]
             prev_layer = new_layer
-            new_layer = [layers.Dropout(dropout_rate)(prev_layer[i]) for i in range(n_clust)]
-            prev_layer = new_layer
+            #new_layer = [layers.Dropout(dropout_rate)(prev_layer[i]) for i in range(n_clust)]
+            #prev_layer = new_layer
+        new_layer = [layers.Dropout(dropout_rate)(prev_layer[i]) for i in range(n_clust)]
+        prev_layer = new_layer
         
         # Concatenate the list of dense layers
         conc_layer = layers.Concatenate(axis=1)(new_layer)
@@ -230,7 +233,7 @@ class generate_gapnet_model():
             
             self.history['clust_'+str(ns)] = self.architecture['clust_'+str(ns)].fit(X_temp, y_temp,  
                         #epochs=EPOCHS, verbose=0,callbacks=[early_stopping], 
-                        epochs=EPOCHS, verbose=0, 
+                        epochs=EPOCHS, verbose=0, batch_size=BATCH_SIZE, 
                         validation_data = ( X_val_tmp, y_val_temp) )
         
             start_feat = start_feat + s
@@ -270,17 +273,18 @@ class generate_gapnet_model():
 
         # Arrays to select the matching layer from the correct network 
         cluster_arr = np.tile(np.arange(self.Nclust), 2*self.Ndense)
-        layer_arr = np.sort( np.tile(np.arange(2*self.Ndense ), self.Nclust) )
-
+        #layer_arr = np.sort( np.tile(np.arange(2*self.Ndense ), self.Nclust) )
+        layer_arr = np.sort( np.tile(np.arange(3 ), self.Nclust) )
+        #print(cluster_arr, layer_arr)
         # Assign weights from first stage   
         for n, (nl, nc) in enumerate(zip( layer_arr, cluster_arr)) :
-
+                #print(n, nl, nc)
                 self.architecture['gapnet'].layers[n + self.Nclust].set_weights( 
                         self.architecture['clust_'+str(nc)].layers[nl].get_weights() )   
 
         # Train the gapnet on complete data
         self.history['gapnet'] = self.architecture['gapnet'].fit( 
-                        X_list, y, epochs = EPOCHS, verbose = 0,
+                        X_list, y, epochs = EPOCHS, verbose = 0, batch_size=BATCH_SIZE, 
                         #callbacks = [early_stopping], validation_data = (X_val_list, to_categorical(y_val)) )
                         validation_data = (X_val_list,y_val) )
 
@@ -348,8 +352,8 @@ class generate_gapnet_model():
      
     
         
-class generate_vanilla_model():
-    """Generator of vanilla model."""
+class generate_standard_model():
+    """Generator of standard model."""
     
     def __init__(self, name: str = 'vanilla', n_feature: int = 40, n_classes: int = 1):
         """Define the Vanilla model
@@ -382,9 +386,9 @@ class generate_vanilla_model():
                  dropout_rate: tf.keras.layers.Dropout = 0.5,
                  activation_function: tf.keras.activations = "relu", 
                  output_activation : tf.keras.activations = "sigmoid",
-                 optim : tf.keras.optimizers = tf.keras.optimizers.Adam(),
+                 optim : tf.keras.optimizers = tf.keras.optimizers.Adam(learning_rate=LR_RATE),
                  learning_rate : float = 0.0,
-                 loss_function : tf.keras.losses = 'binary_crossentropy',
+                 loss_function : tf.keras.losses = tf.keras.losses.BinaryCrossentropy(),
                  show_summary: bool = False):
         
         """Generate the neural network architecture.
@@ -419,7 +423,7 @@ class generate_vanilla_model():
         # check that the dropout rate is in the correct range
         if dropout_rate> 1.0 or dropout_rate<0.0 :
             raise ValueError("The dropout rate must be a value between 0 and 1 ")
-         
+        
         # Assign correct learning rate if provided   
         if learning_rate > 0:
             optim.learning_rate.assign(learning_rate)
@@ -436,8 +440,9 @@ class generate_vanilla_model():
         # Add n_dense consecutive dense layers followed by dropout layers
         for nl in range(n_dense):
             self.architecture.add(tf.keras.layers.Dense(n_nodes, activation = activation_function))
-            self.architecture.add(tf.keras.layers.Dropout(dropout_rate))
+            #self.architecture.add(tf.keras.layers.Dropout(dropout_rate))
         
+        self.architecture.add(tf.keras.layers.Dropout(dropout_rate))
         # Add the output layer with activation function "output_activation"
         self.architecture.add(tf.keras.layers.Dense(self.Nclass, activation=output_activation))
         
@@ -459,7 +464,7 @@ class generate_vanilla_model():
         y_test: np.nedarray of testing labels
         """
         self.build_model(show_summary=False)
-        self.history = self.architecture.fit(X_train, y_train, epochs=EPOCHS, verbose=0,
+        self.history = self.architecture.fit(X_train, y_train, epochs=EPOCHS, verbose=0, batch_size=BATCH_SIZE, 
         #    callbacks=[early_stopping], validation_data=(X_val, to_categorical(y_val)))
         validation_data=(X_val, y_val))
         
@@ -643,9 +648,11 @@ def preprocess_standardization_with_imputed_data(method, X_train, Y_train, X_tes
     from sklearn.impute import IterativeImputer
     
     X_incomplete_features = copy.deepcopy(X_incomplete)
-    
+    mismatch = 450
     X_train_with_imputation = np.append(X_train, X_incomplete_features, axis=0)
+    #X_train_with_imputation = np.concatenate((X_train, X_incomplete_features[-mismatch:,:], X_incomplete_features[0:mismatch:,:]), axis=0)
     Y_train_with_imputation = np.append(Y_train, Y_incomplete, axis=0)
+    #Y_train_with_imputation = np.concatenate((Y_train, Y_incomplete[-mismatch:], Y_incomplete[0:mismatch]), axis=0)
     
     if method == 'mean':
         imp = SimpleImputer(missing_values=np.nan, strategy='mean')
@@ -660,7 +667,7 @@ def preprocess_standardization_with_imputed_data(method, X_train, Y_train, X_tes
         imp = KNNImputer(n_neighbors=5, weights="uniform")
         X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
     elif method == 'bayesian':
-        imp = IterativeImputer(random_state=23)
+        imp = IterativeImputer(random_state=2)
         X_train_with_imputation = imp.fit_transform(X_train_with_imputation)
     else:
         print("Oops! That was no valid method. Try again...")
@@ -668,6 +675,10 @@ def preprocess_standardization_with_imputed_data(method, X_train, Y_train, X_tes
     scaler = StandardScaler()
     X_train_with_imputation = scaler.fit_transform(X_train_with_imputation)
     X_test_with_imputation = scaler.transform(X_test)
+    
+    thres = 20
+    X_train_with_imputation = np.clip(X_train_with_imputation, -thres, thres)
+    X_test_with_imputation = np.clip(X_test_with_imputation, -thres, thres)
         
     return X_train_with_imputation, Y_train_with_imputation, X_test_with_imputation
 
@@ -760,23 +771,27 @@ def plot_roc_avg(name, label, prediction, runs, **kwargs):
     for axis in ['top','bottom','left','right']:
         ax.spines[axis].set_linewidth(1)
 
-def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **kwargs):
+def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, training=False, **kwargs):
     metrics = ['loss']
     history_aucs = []
+    history_training_aucs = []
     history_epoch = histories[0].epoch
     for history in histories:
         #history_aucs.append(history.history['val_accuracy'])
         history_aucs.append(history.history['val_auc'])
+        history_training_aucs.append(history.history['auc'])
         #history_auc_avg.append(history.history['auc'])
         #history_loss_avg.append(history.history['loss'])
 
     
     if axes==None:
-        fig, axes = plt.subplots(1,1,figsize=(8, 8))
+        fig, axes = plt.subplots(1,2,figsize=(8, 16))
         
     
     history_auc_avg = np.mean(history_aucs, axis=0)
     history_auc_std = np.std(history_aucs, axis=0)
+    history_training_auc_avg = np.mean(history_training_aucs, axis=0)
+    history_training_auc_std = np.std(history_training_aucs, axis=0)
     
     axes.set_box_aspect(1)
     axes.set_yticks(np.round( np.arange(0.2,1.2,0.2), decimals = 1 ))
@@ -786,22 +801,26 @@ def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **kw
     
     if shaded:
         axes.fill_between(history_epoch, history_auc_avg-history_auc_std, history_auc_avg+history_auc_std, alpha = alpha, **kwargs)
-        axes.plot(history_epoch, history_auc_avg, lw=2., **kwargs)
-    else:
-        axes.plot(history_epoch, history_auc_avg, alpha = 0.7, lw=2., **kwargs)
     
     axes.set_xlabel('# epochs', fontsize = 22)
-        
-    axes.set_ylabel('Testing AUC', fontsize = 22)
+    
+    if training:
+        axes.set_ylabel('Training AUC', fontsize = 22)
+        axes.plot(history_epoch, history_training_auc_avg, alpha = 0.7, lw=2., **kwargs)
+    else:
+        axes.set_ylabel('Testing AUC', fontsize = 22)
+        axes.plot(history_epoch, history_auc_avg, alpha = 0.7, lw=2., **kwargs)
     axes.set_ylim([0.4, 1])
     axes.set_xlim([0,EPOCHS])
 
-def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **kwargs):
+def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, training=False, **kwargs):
     history_losses = []
+    history_training_losses = []
     history_epoch = histories[0].epoch
     for history in histories:
         #history_aucs.append(history.history['val_accuracy'])
         history_losses.append(history.history['val_loss'])
+        history_training_losses.append(history.history['loss'])
         #history_auc_avg.append(history.history['auc'])
         #history_loss_avg.append(history.history['loss'])
 
@@ -812,6 +831,8 @@ def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **k
     
     history_loss_avg = np.mean(history_losses, axis=0)
     history_loss_std = np.std(history_losses, axis=0)
+    history_training_loss_avg = np.mean(history_training_losses, axis=0)
+    history_training_loss_std = np.std(history_training_losses, axis=0)
     
     axes.set_box_aspect(1)
     axes.set_yticks(np.linspace(0,10,5))
@@ -821,13 +842,15 @@ def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, **k
     
     if shaded:
         axes.fill_between(history_epoch, history_loss_avg-history_loss_std, history_loss_avg+history_loss_std, alpha = alpha, **kwargs)
-        axes.plot(history_epoch, history_loss_avg, lw=2., **kwargs)
-    else:
-        axes.plot(history_epoch, history_loss_avg, alpha = 0.7, lw=2., **kwargs)
     
     axes.set_xlabel('# epochs', fontsize = 22)
-        
-    axes.set_ylabel('Testing loss', fontsize = 22)
+    
+    if training:
+        axes.set_ylabel('Training loss', fontsize = 22)
+        axes.plot(history_epoch, history_training_loss_avg, alpha = 1.0, lw=2., **kwargs)
+    else:
+        axes.set_ylabel('Testing loss', fontsize = 22)
+        axes.plot(history_epoch, history_loss_avg, alpha = 1.0, lw=2., **kwargs)
     axes.set_ylim([0, 10])
     axes.set_xlim([0,EPOCHS])
         
