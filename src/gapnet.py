@@ -44,7 +44,7 @@ early_stopping = tf.keras.callbacks.EarlyStopping(
 
 skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 fold = 1
-EPOCHS = 100
+EPOCHS = 1000
 BATCH_SIZE = 16
 LR_RATE = 0.001
 
@@ -52,7 +52,7 @@ kern_init = tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05)
 bias_init = tf.keras.initializers.Zeros()
 
 class generate_gapnet_model():
-    """Generator of gapnet model."""
+    """Generator of GapNet model."""
     
     def __init__(self, cluster_sizes: np.ndarray, n_feature : int = 40, n_classes : int = 1):
         """Define the GapNet model
@@ -165,7 +165,7 @@ class generate_gapnet_model():
         # The list of input layers for each cluster    
         input_layer = [layers.Input( shape =(s,) ) for s in self.cluster_sizes]   
         
-        print("Generating the final gapnet model ... ")    
+        print("Generating the final GapNet model ... ")    
 
         # Build the next layer on top of the previous one    
         prev_layer = input_layer
@@ -771,7 +771,7 @@ def plot_roc_avg(name, label, prediction, runs, **kwargs):
     for axis in ['top','bottom','left','right']:
         ax.spines[axis].set_linewidth(1)
 
-def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, training=False, **kwargs):
+def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, training=False, ylolim = 0.4, **kwargs):
     metrics = ['loss']
     history_aucs = []
     history_training_aucs = []
@@ -794,8 +794,8 @@ def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, trai
     history_training_auc_std = np.std(history_training_aucs, axis=0)
     
     axes.set_box_aspect(1)
-    axes.set_yticks(np.round( np.arange(0.2,1.2,0.2), decimals = 1 ))
-    axes.set_yticklabels(np.round( np.arange(0.2,1.2,0.2), decimals = 1 ) , fontsize = 22)
+    axes.set_yticks(np.round( np.arange(0.2,1.2,0.1), decimals = 1 ))
+    axes.set_yticklabels(np.round( np.arange(0.2,1.2,0.1), decimals = 1 ) , fontsize = 22)
     axes.set_xticks(np.linspace(0,EPOCHS,3, dtype=int))
     axes.set_xticklabels(np.linspace(0,EPOCHS,3, dtype=int) , fontsize = 22)
     
@@ -810,10 +810,10 @@ def plot_auc_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, trai
     else:
         axes.set_ylabel('Testing AUC', fontsize = 22)
         axes.plot(history_epoch, history_auc_avg, alpha = 0.7, lw=2., **kwargs)
-    axes.set_ylim([0.4, 1])
+    axes.set_ylim([ylolim, 1])
     axes.set_xlim([0,EPOCHS])
 
-def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, training=False, **kwargs):
+def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, training=False, yhilim = 10, **kwargs):
     history_losses = []
     history_training_losses = []
     history_epoch = histories[0].epoch
@@ -835,8 +835,8 @@ def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, tra
     history_training_loss_std = np.std(history_training_losses, axis=0)
     
     axes.set_box_aspect(1)
-    axes.set_yticks(np.linspace(0,10,5))
-    axes.set_yticklabels(np.linspace(0,10,5) , fontsize = 22)
+    axes.set_yticks(np.linspace(0,yhilim,5))
+    axes.set_yticklabels(np.linspace(0,yhilim,5) , fontsize = 22)
     axes.set_xticks(np.linspace(0,EPOCHS,3, dtype=int))
     axes.set_xticklabels(np.linspace(0,EPOCHS,3, dtype=int) , fontsize = 22)
     
@@ -851,7 +851,7 @@ def plot_loss_metrics(name, histories, axes=None, alpha = 0.1, shaded=False, tra
     else:
         axes.set_ylabel('Testing loss', fontsize = 22)
         axes.plot(history_epoch, history_loss_avg, alpha = 1.0, lw=2., **kwargs)
-    axes.set_ylim([0, 10])
+    axes.set_ylim([0, yhilim])
     axes.set_xlim([0,EPOCHS])
         
 def plot_metrics(history):
